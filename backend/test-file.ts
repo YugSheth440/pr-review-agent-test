@@ -1,7 +1,8 @@
-// test-file.ts
-export function addNumbers(a: number, b: number): number {
-    // Intentional code smell or simple logic
-    const result = a + b;
-    console.log("Adding numbers result: " + result);
-    return result;
+// Hardcoded credentials
+const aws_secret_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+
+// SQL Injection risk (dynamic query string interpolation)
+function getUserData(userId: string) {
+    const query = `SELECT * FROM users WHERE id = '${userId}'`;
+    return query;
 }
