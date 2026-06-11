@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
-import { handleWebhook } from "./controllers/webhookController";
+import { handleWebhook } from "./controllers/webhookController.js";
+import { getRepositories, getPullRequests, getPullRequestDetails, updateFindingStatus } from "./controllers/dashboardController.js";
 
 const app = express();
 
@@ -20,5 +21,11 @@ app.get("/health", (req, res) => {
 
 // GitHub webhook route
 app.post("/api/webhooks/github", handleWebhook);
+
+// Dashboard API routes
+app.get("/api/repositories", getRepositories);
+app.get("/api/pull-requests", getPullRequests);
+app.get("/api/pull-requests/:id", getPullRequestDetails);
+app.patch("/api/scans/:scanId/findings/:findingId", updateFindingStatus);
 
 export default app;

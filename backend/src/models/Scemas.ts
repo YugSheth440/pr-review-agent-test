@@ -1,4 +1,4 @@
-import { Schema, model, Document } from "mongoose";
+import { Schema, model, Document, Types } from "mongoose";
 
 // 1. Repository Interface & Schema
 export interface IRepository extends Document {
@@ -24,7 +24,7 @@ export interface IPullRequest extends Document {
   title: string;
   author: string;
   state: "open" | "closed";
-  repository: Schema.Types.ObjectId;
+  repository: Types.ObjectId; // Fixed: Use Types.ObjectId instead of Schema.Types.ObjectId
   createdAt: Date;
   updatedAt: Date;
 }
@@ -54,7 +54,7 @@ export interface IFinding {
 }
 
 export interface IScanResult extends Document {
-  pullRequest: Schema.Types.ObjectId;
+  pullRequest: Types.ObjectId; // Fixed: Use Types.ObjectId instead of Schema.Types.ObjectId
   agentName: "quality" | "security" | "dependency";
   status: "pending" | "success" | "failed";
   findings: IFinding[];

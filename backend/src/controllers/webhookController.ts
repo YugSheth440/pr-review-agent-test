@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
-import { verify } from "@octokit/webhooks";
+import { verify } from "@octokit/webhooks-methods";
+import { orchestratePRScan } from "../agents/orchestrator.js";
 
 interface AuthenticatedRequest extends Request {
   rawBody?: string;
@@ -37,12 +38,20 @@ export async function handleWebhook(req: AuthenticatedRequest, res: Response): P
     const prNumber = payload.number;
     const repoName = payload.repository.name;
     const repoOwner = payload.repository.owner.login;
+    const prTitle = payload.pull_request.title;
+    const prAuthor = payload.pull_request.user.login;
 
     console.log(`PR Event Action: ${action} on ${repoOwner}/${repoName} #${prNumber}`);
 
     if (action === "opened" || action === "synchronize") {
-      console.log(`Processing PR #${prNumber} for code review...`);
-      // TODO: Async trigger to our Agent Orchestrator will go here
+      // Trigger the multi-agent orchestration pipeline asynchronously
+      orchestratePRScan(repoOwner, repoName, prNumber, prTitle, prAuthor)
+        .then(() => {
+          console.log(`Successfully completed PR #${prNumber} scan and saved to database.`);
+        })
+        .catch((err) => {
+          console.error(`Orchestration failed for PR #${prNumber}:`, err);
+        });
     }
   }
 

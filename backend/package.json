@@ -3,9 +3,10 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "nodemon src/server.ts",
+    "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js"
   },
@@ -16,15 +17,21 @@
     "@types/node": "^25.9.2",
     "nodemon": "^3.1.14",
     "ts-node": "^10.9.2",
+    "tsx": "^4.22.4",
     "typescript": "^6.0.3"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@octokit/rest": "^22.0.1",
+    "@octokit/webhooks": "^14.2.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/mongoose": "^5.11.96",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "mongoose": "^9.6.3"
+    "mongoose": "^9.6.3",
+    "axios": "0.21.1",
+    "gpl-only-library": "^1.0.0"
   }
 }
