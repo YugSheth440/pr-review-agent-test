@@ -15,13 +15,14 @@ import {
   EyeOff
 } from "lucide-react";
 
-const BACKEND_URL = "http://localhost:5000";
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:5000";
 
 interface Repository {
   _id: string;
   owner: string;
   repo: string;
   isActive: boolean;
+  githubWebhookId?: number;
 }
 
 interface PullRequest {
@@ -59,11 +60,20 @@ interface PRDetailResponse {
 }
 
 export default function App() {
-  const [view, setView] = useState<"dashboard" | "detail">("dashboard");
+  const [view, setView] = useState<"dashboard" | "repositories" | "detail">("dashboard");
   const [pullRequests, setPullRequests] = useState<PullRequest[]>([]);
   const [selectedPR, setSelectedPR] = useState<PRDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
+
+  // New Repository-related states
+  const [repositories, setRepositories] = useState<Repository[]>([]);
+  const [repoOwnerInput, setRepoOwnerInput] = useState("");
+  const [repoNameInput, setRepoNameInput] = useState("");
+  const [repoLoading, setRepoLoading] = useState(false);
+  const [repoError, setRepoError] = useState("");
+  const [repoSuccess, setRepoSuccess] = useState("");
+  const [selectedRepoFilter, setSelectedRepoFilter] = useState("all");
 
   // Fetch all scanned PRs
   const fetchPullRequests = async () => {
@@ -79,8 +89,20 @@ export default function App() {
     }
   };
 
+  // Fetch all tracked repositories
+  const fetchRepositories = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/repositories`);
+      const data = await res.json();
+      setRepositories(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Error loading repositories:", err);
+    }
+  };
+
   useEffect(() => {
     fetchPullRequests();
+    fetchRepositories();
   }, []);
 
   // Fetch details of a selected PR
@@ -95,6 +117,82 @@ export default function App() {
       console.error("Error loading PR details:", err);
     } finally {
       setDetailLoading(false);
+    }
+  };
+
+  // Register a new repository
+  const handleRegisterRepository = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRepoLoading(true);
+    setRepoError("");
+    setRepoSuccess("");
+
+    if (!repoOwnerInput.trim() || !repoNameInput.trim()) {
+      setRepoError("Owner and Repository name are required.");
+      setRepoLoading(false);
+      return;
+    }
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/repositories`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner: repoOwnerInput.trim(), repo: repoNameInput.trim() }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setRepoSuccess(data.webhookStatus === "created" 
+          ? "Repository and GitHub Webhook registered successfully!" 
+          : "Repository registered. Note: Programmatic Webhook setup failed; please add webhook manually on GitHub.");
+        setRepoOwnerInput("");
+        setRepoNameInput("");
+        fetchRepositories();
+      } else {
+        setRepoError(data.error || "Failed to register repository.");
+      }
+    } catch (err) {
+      setRepoError("Server error. Failed to reach backend.");
+      console.error(err);
+    } finally {
+      setRepoLoading(false);
+    }
+  };
+
+  // Toggle repository active status
+  const handleToggleRepositoryActive = async (repoId: string, currentActive: boolean) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/repositories/${repoId}/toggle`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: !currentActive }),
+      });
+
+      if (res.ok) {
+        setRepositories(prev => prev.map(r => r._id === repoId ? { ...r, isActive: !currentActive } : r));
+      }
+    } catch (err) {
+      console.error("Error toggling repository active state:", err);
+    }
+  };
+
+  // Delete/untrack a repository
+  const handleDeleteRepository = async (repoId: string) => {
+    if (!window.confirm("Are you sure you want to untrack this repository? All scan history for this repository will be deleted.")) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/repositories/${repoId}`, {
+        method: "DELETE",
+      });
+
+      if (res.ok) {
+        setRepositories(prev => prev.filter(r => r._id !== repoId));
+        fetchPullRequests(); // refresh PR list as some might have been deleted
+      }
+    } catch (err) {
+      console.error("Error deleting repository:", err);
     }
   };
 
@@ -132,15 +230,22 @@ export default function App() {
     }
   };
 
-  // Calculate dashboard stats
-  const totalScans = pullRequests.length;
-  const pendingReviews = pullRequests.reduce((acc, pr) => acc + pr.pendingReviewCount, 0);
-  const activeRepos = new Set(pullRequests.map(pr => pr.repository?.repo)).size;
+  // Filter pull requests by selected repository
+  const filteredPRs = selectedRepoFilter === "all"
+    ? pullRequests
+    : pullRequests.filter(pr => pr.repository?.repo === selectedRepoFilter);
+
+  // Calculate dashboard stats based on filter
+  const totalScans = filteredPRs.length;
+  const pendingReviews = filteredPRs.reduce((acc, pr) => acc + pr.pendingReviewCount, 0);
+  const activeRepos = selectedRepoFilter === "all"
+    ? new Set(pullRequests.map(pr => pr.repository?.repo).filter(Boolean)).size
+    : 1;
 
   return (
     <div className="min-h-screen text-slate-100 p-6 max-w-7xl mx-auto">
       {/* Top Header */}
-      <header className="flex justify-between items-center mb-8 border-b border-slate-800 pb-5">
+      <header className="flex justify-between items-center mb-6 border-b border-slate-800 pb-5">
         <div className="flex items-center gap-3">
           <div className="bg-violet-600 p-2.5 rounded-xl shadow-lg shadow-violet-500/20">
             <GitPullRequest className="h-6 w-6 text-white" />
@@ -159,6 +264,32 @@ export default function App() {
           </span>
         </div>
       </header>
+
+      {/* Navigation Tabs */}
+      {view !== "detail" && (
+        <div className="flex gap-4 mb-8 border-b border-slate-800 pb-4">
+          <button
+            onClick={() => setView("dashboard")}
+            className={`text-sm font-semibold px-4 py-2 rounded-lg transition-all ${
+              view === "dashboard"
+                ? "bg-violet-600 text-white shadow-lg shadow-violet-500/20"
+                : "text-slate-400 hover:text-white hover:bg-slate-850/50"
+            }`}
+          >
+            Pull Requests
+          </button>
+          <button
+            onClick={() => setView("repositories")}
+            className={`text-sm font-semibold px-4 py-2 rounded-lg transition-all ${
+              view === "repositories"
+                ? "bg-violet-600 text-white shadow-lg shadow-violet-500/20"
+                : "text-slate-400 hover:text-white hover:bg-slate-850/50"
+            }`}
+          >
+            Manage Repositories
+          </button>
+        </div>
+      )}
 
       {view === "dashboard" ? (
         /* ================= DASHBOARD VIEW ================= */
@@ -198,18 +329,35 @@ export default function App() {
 
           {/* Scanned PRs Table */}
           <div className="glass-panel p-6">
-            <h2 className="text-lg font-semibold text-white mb-5 flex items-center gap-2">
-              <Clock className="h-5 w-5 text-violet-400" />
-              Pull Request Scan History
-            </h2>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-5 border-b border-slate-800 pb-4">
+              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                <Clock className="h-5 w-5 text-violet-400" />
+                Pull Request Scan History
+              </h2>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-400">Filter Repository:</span>
+                <select
+                  value={selectedRepoFilter}
+                  onChange={(e) => setSelectedRepoFilter(e.target.value)}
+                  className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-1.5 focus:outline-none focus:border-violet-500"
+                >
+                  <option value="all">All Repositories</option>
+                  {repositories.map((r) => (
+                    <option key={r._id} value={r.repo}>
+                      {r.owner}/{r.repo}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
 
             {loading ? (
               <div className="flex justify-center items-center py-12">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-500"></div>
               </div>
-            ) : pullRequests.length === 0 ? (
+            ) : filteredPRs.length === 0 ? (
               <div className="text-center py-12 text-slate-400">
-                No PR scans found in the database. Open a pull request in your GitHub repository to trigger the agent.
+                No PR scans found for the selected repository. Open a pull request in your GitHub repository to trigger the agent.
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -226,7 +374,7 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/50">
-                    {pullRequests.map((pr) => (
+                    {filteredPRs.map((pr) => (
                       <tr key={pr._id} className="hover:bg-slate-800/30 transition-colors">
                         <td className="py-4 px-4">
                           <div className="font-semibold text-slate-200 text-sm max-w-xs truncate">{pr.title}</div>
@@ -273,13 +421,149 @@ export default function App() {
             )}
           </div>
         </div>
+      ) : view === "repositories" ? (
+        /* ================= REPOSITORIES VIEW ================= */
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left Side: Register Repository Form */}
+          <div className="lg:col-span-1">
+            <div className="glass-panel p-6 border border-slate-800">
+              <h3 className="text-lg font-bold text-white mb-4">Register Repository</h3>
+              <p className="text-xs text-slate-400 mb-5 leading-relaxed">
+                Add a new GitHub repository to monitor. The agent will attempt to register a webhook automatically.
+              </p>
+
+              <form onSubmit={handleRegisterRepository} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+                    GitHub Owner / Org
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. YugSheth440"
+                    value={repoOwnerInput}
+                    onChange={(e) => setRepoOwnerInput(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-850 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-violet-500 transition-colors"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+                    Repository Name
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. pr-review-agent-test"
+                    value={repoNameInput}
+                    onChange={(e) => setRepoNameInput(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-850 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-violet-500 transition-colors"
+                  />
+                </div>
+
+                {repoError && (
+                  <div className="text-xs font-medium text-rose-400 bg-rose-500/10 p-2.5 rounded-lg border border-rose-500/20">
+                    {repoError}
+                  </div>
+                )}
+
+                {repoSuccess && (
+                  <div className="text-xs font-medium text-emerald-400 bg-emerald-500/10 p-2.5 rounded-lg border border-emerald-500/20 leading-relaxed">
+                    {repoSuccess}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={repoLoading}
+                  className="w-full bg-violet-600 hover:bg-violet-500 disabled:bg-violet-850 text-white text-sm font-semibold py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-all shadow-lg shadow-violet-500/10 cursor-pointer"
+                >
+                  {repoLoading ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      Registering...
+                    </>
+                  ) : (
+                    "Register"
+                  )}
+                </button>
+              </form>
+            </div>
+          </div>
+
+          {/* Right Side: Tracked Repositories List */}
+          <div className="lg:col-span-2">
+            <div className="glass-panel p-6 border border-slate-800">
+              <h3 className="text-lg font-bold text-white mb-5">Tracked Repositories</h3>
+
+              {repositories.length === 0 ? (
+                <div className="text-center py-12 text-slate-400">
+                  No repositories are currently tracked. Add one on the left.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-slate-400 text-xs uppercase tracking-wider font-semibold">
+                        <th className="py-3 px-4">Repository</th>
+                        <th className="py-3 px-4">Webhook Type</th>
+                        <th className="py-3 px-4">Monitoring Status</th>
+                        <th className="py-3 px-4 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/50">
+                      {repositories.map((repo) => (
+                        <tr key={repo._id} className="hover:bg-slate-800/10 transition-colors">
+                          <td className="py-4 px-4 text-sm font-semibold text-slate-200">
+                            {repo.owner}/{repo.repo}
+                          </td>
+                          <td className="py-4 px-4 text-xs">
+                            {repo.githubWebhookId ? (
+                              <span className="text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">
+                                Programmatic
+                              </span>
+                            ) : (
+                              <span className="text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-full border border-amber-500/20">
+                                Manual config
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-4 px-4">
+                            <button
+                              onClick={() => handleToggleRepositoryActive(repo._id, repo.isActive)}
+                              className={`text-xs px-2.5 py-1 rounded-lg font-semibold border transition-all cursor-pointer ${
+                                repo.isActive
+                                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
+                                  : "bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700/50"
+                              }`}
+                            >
+                              {repo.isActive ? "Monitoring Active" : "Paused"}
+                            </button>
+                          </td>
+                          <td className="py-4 px-4 text-right">
+                            <button
+                              onClick={() => handleDeleteRepository(repo._id)}
+                              className="text-xs font-semibold text-rose-450 hover:text-white bg-rose-500/10 hover:bg-rose-600 px-2.5 py-1 rounded-lg border border-rose-500/20 hover:border-rose-600 transition-all cursor-pointer"
+                            >
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       ) : (
         /* ================= PR DETAILS VIEW ================= */
         <div>
           {/* Back button */}
           <button
             onClick={() => { setView("dashboard"); setSelectedPR(null); }}
-            className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors mb-6 text-sm font-semibold"
+            className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors mb-6 text-sm font-semibold cursor-pointer"
           >
             <ArrowLeft className="h-4 w-4" />
             Back to Dashboard
@@ -322,7 +606,7 @@ export default function App() {
 
                   <div className="border-t border-slate-800 pt-4 mt-4">
                     <a
-                      href={`https://github.com/${selectedPR.pullRequest.repository.owner}/${selectedPR.pullRequest.repository.repo}/pull/${selectedPR.pullRequest.prNumber}`}
+                      href={`https://github.com/${selectedPR.pullRequest.repository?.owner || selectedPR.pullRequest.repository?.owner}/${selectedPR.pullRequest.repository?.repo}/pull/${selectedPR.pullRequest.prNumber}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="w-full flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold py-2 px-4 rounded-lg transition-colors"
@@ -343,7 +627,7 @@ export default function App() {
                           {scan.agentName} Agent
                         </span>
                         <div className="flex items-center gap-2">
-                          <span className="text-xs text-slate-400">({scan.findings.length} alerts)</span>
+                          <span className="text-xs text-slate-400">({scan.findings?.length || 0} alerts)</span>
                           {renderStatusBadge(scan.status)}
                         </div>
                       </div>
@@ -367,7 +651,7 @@ export default function App() {
                     <div className="space-y-6">
                       {selectedPR.scans.map((scan) => (
                         <div key={scan._id}>
-                          {scan.findings.length > 0 && (
+                          {scan.findings && scan.findings.length > 0 && (
                             <div className="space-y-4">
                               <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 border-b border-slate-800 pb-2 flex items-center justify-between">
                                 <span className="capitalize">{scan.agentName} Alerts</span>
@@ -399,7 +683,7 @@ export default function App() {
                                       <button
                                         onClick={() => handleUpdateFindingStatus(scan._id, finding._id, "approved")}
                                         disabled={finding.status === "approved"}
-                                        className={`p-1.5 rounded text-xs flex items-center gap-1 transition-all ${finding.status === "approved"
+                                        className={`p-1.5 rounded text-xs flex items-center gap-1 transition-all cursor-pointer ${finding.status === "approved"
                                             ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
                                             : "text-slate-400 hover:text-white hover:bg-slate-800"
                                           }`}
@@ -411,8 +695,8 @@ export default function App() {
                                       <button
                                         onClick={() => handleUpdateFindingStatus(scan._id, finding._id, "dismissed")}
                                         disabled={finding.status === "dismissed"}
-                                        className={`p-1.5 rounded text-xs flex items-center gap-1 transition-all ${finding.status === "dismissed"
-                                            ? "bg-slate-800 text-slate-500"
+                                        className={`p-1.5 rounded text-xs flex items-center gap-1 transition-all cursor-pointer ${finding.status === "dismissed"
+                                            ? "bg-slate-850 text-slate-500"
                                             : "text-slate-400 hover:text-rose-400 hover:bg-slate-800"
                                           }`}
                                         title="Dismiss warning"
